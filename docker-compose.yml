@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  cloud-storage:
+    build: .
+    container_name: cloud_storage
+    ports:
+      - "8000:8000"
+    volumes:
+      # Дані зберігаються на хості — не губляться при перезапуску
+      - ./data_storage:/app/data_storage
+      - ./cloud_access.log:/app/cloud_access.log
+      - ./users.json:/app/users.json
+      - ./tokens.json:/app/tokens.json
+      - ./secret.key:/app/secret.key
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
