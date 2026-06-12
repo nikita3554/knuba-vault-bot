@@ -1,0 +1,8 @@
+secret.key
+users.json
+tokens.json
+cloud_access.log
+data_storage/
+__pycache__/
+*.pyc
+.env
