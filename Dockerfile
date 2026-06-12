@@ -2,18 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Встановлюємо залежності
-RUN pip install --no-cache-dir cryptography
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Копіюємо файли
-COPY server.py .
-COPY demo.html .
+COPY . .
 
-# Створюємо директорії
 RUN mkdir -p data_storage
 
-# Відкриваємо порт
-EXPOSE 8000
-
-# Запускаємо сервер
-CMD ["python", "server.py"]
+CMD ["python", "bot.py"]
