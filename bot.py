@@ -53,7 +53,7 @@ else:
     print("⚠️ Сервер не відповів за 15с, але продовжуємо...")
 
 # ─── Налаштування ─────────────────────────────────────────────────────────────
-BOT_TOKEN    = "ВАШ_НОВИЙ_ТОКЕН_ВІД_BOTFATHER"   # отримати у @BotFather
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "")  # отримати у @BotFather
 SERVER_URL   = os.environ.get("SERVER_URL", "http://localhost:" + os.environ.get("PORT", "8000"))      # адреса server.py
 MAX_TG_SIZE  = 50 * 1024 * 1024            # Telegram ліміт: 50 MB на файл
 
