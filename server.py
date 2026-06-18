@@ -22,7 +22,7 @@ USERS_FILE      = "./users.json"
 TOKENS_FILE     = "./tokens.json"
 SECRET_KEY_FILE = "./secret.key"
 
-MAX_FILE_SIZE   = 500 * 1024 * 1024   # 500 MB — ліміт одного файлу
+MAX_FILE_SIZE   = 4 * 1024 * 1024 * 1024   # 2 GB
 CHUNK_SIZE      = 4 * 1024 * 1024     # 4 MB — розмір буфера читання
 TOKEN_TTL       = 86400               # 24 години
 RATE_LIMIT      = 60                  # максимум запитів за хвилину з одного IP
