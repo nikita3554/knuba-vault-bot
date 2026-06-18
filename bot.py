@@ -56,12 +56,36 @@ def set_bot_commands():
     ]
     bot.set_my_commands(commands)
 
-# ─── Сесії ────────────────────────────────────────────────────────────────────
-sessions: dict[int, dict] = {}  # uid -> {token, username}
+# ─── Сесії та FSM стани ─────────────────────────────────────────────────────
+sessions: dict[int, dict] = {}   # uid -> {token, username}
+states:   dict[int, dict] = {}   # uid -> {state, data}
 
-def get_token(uid): return sessions.get(uid, {}).get("token")
+# Стани FSM
+STATE_LOGIN_USER    = "login_user"
+STATE_LOGIN_PASS    = "login_pass"
+STATE_REGISTER_USER = "register_user"
+STATE_REGISTER_PASS = "register_pass"
+
+def get_token(uid):    return sessions.get(uid, {}).get("token")
 def get_username(uid): return sessions.get(uid, {}).get("username", "")
 def is_logged_in(uid): return uid in sessions
+
+def set_state(uid, state, data=None):
+    states[uid] = {"state": state, "data": data or {}}
+
+def get_state(uid):
+    return states.get(uid, {}).get("state")
+
+def get_state_data(uid):
+    return states.get(uid, {}).get("data", {})
+
+def clear_state(uid):
+    states.pop(uid, None)
+
+def kb_cancel():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("❌ Скасувати", callback_data="cancel"))
+    return kb
 
 # ─── Утиліти ──────────────────────────────────────────────────────────────────
 def fmt(b):
@@ -203,55 +227,30 @@ def cmd_help(msg):
 # ─── /register ────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["register"])
 def cmd_register(msg):
-    parts = msg.text.split(maxsplit=2)
-    if len(parts) < 3:
-        bot.reply_to(msg,
-            "📝 *Реєстрація*\n\n"
-            "Використання:\n`/register логін пароль`\n\n"
-            "Приклад:\n`/register ivan mypassword123`")
+    uid = msg.from_user.id
+    if is_logged_in(uid):
+        bot.reply_to(msg, f"⚠️ Ви вже авторизовані як *{get_username(uid)}*\n\nСпочатку /logout", reply_markup=kb_main_auth())
         return
-    _, username, password = parts
-    res, code = api("POST", "/register", json_data={"username": username, "password": password})
-    if code == 201:
-        bot.reply_to(msg,
-            f"✅ *Акаунт створено!*\n\n"
-            f"👤 Логін: `{username}`\n\n"
-            f"Тепер увійдіть:\n`/login {username} {password}`")
-    elif code == 409:
-        bot.reply_to(msg, f"⚠️ Користувач `{username}` вже існує.\n\nСпробуйте інший логін.")
-    else:
-        bot.reply_to(msg, f"❌ {res.get('message', 'Помилка реєстрації')}")
+    set_state(uid, STATE_REGISTER_USER)
+    bot.reply_to(msg,
+        "📝 *Реєстрація нового акаунту*\n\n"
+        "Крок 1/2\n"
+        "👤 Введіть бажаний логін:",
+        reply_markup=kb_cancel())
 
 # ─── /login ───────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["login"])
 def cmd_login(msg):
-    parts = msg.text.split(maxsplit=2)
     uid = msg.from_user.id
-    if len(parts) < 3:
-        bot.reply_to(msg,
-            "🔓 *Вхід у сховище*\n\n"
-            "Використання:\n`/login логін пароль`\n\n"
-            "Приклад:\n`/login ivan mypassword123`")
+    if is_logged_in(uid):
+        bot.reply_to(msg, f"⚠️ Ви вже авторизовані як *{get_username(uid)}*", reply_markup=kb_main_auth())
         return
-    _, username, password = parts
-    # Видаляємо повідомлення з паролем
-    try: bot.delete_message(msg.chat.id, msg.message_id)
-    except: pass
-
-    res, code = api("POST", "/login", json_data={"username": username, "password": password})
-    if code == 200:
-        sessions[uid] = {"token": res["token"], "username": username}
-        bot.send_message(uid,
-            f"✅ *Вхід виконано!*\n\n"
-            f"👤 Акаунт: *{username}*\n"
-            f"🔐 Сесія активна 24 години\n\n"
-            f"Оберіть дію:",
-            reply_markup=kb_main_auth())
-    else:
-        bot.send_message(uid,
-            f"❌ *Помилка входу*\n\n"
-            f"{res.get('message', 'Невірний логін або пароль')}\n\n"
-            f"Спробуйте ще раз: `/login логін пароль`")
+    set_state(uid, STATE_LOGIN_USER)
+    bot.reply_to(msg,
+        "🔓 *Вхід у сховище*\n\n"
+        "Крок 1/2\n"
+        "👤 Введіть ваш логін:",
+        reply_markup=kb_cancel())
 
 # ─── /logout ──────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["logout"])
@@ -577,20 +576,6 @@ def handle_callback(call):
             disable_web_page_preview=True)
 
     # Інструкції
-    elif data == "guide_login":
-        bot.edit_message_text(
-            "🔓 *Вхід у сховище*\n\n"
-            "Введіть команду:\n`/login логін пароль`\n\n"
-            "Приклад:\n`/login ivan mypassword`",
-            cid, mid, reply_markup=kb_back_menu())
-
-    elif data == "guide_register":
-        bot.edit_message_text(
-            "📝 *Реєстрація*\n\n"
-            "Введіть команду:\n`/register логін пароль`\n\n"
-            "Приклад:\n`/register ivan mypassword`",
-            cid, mid, reply_markup=kb_back_menu())
-
     elif data == "how_upload":
         bot.edit_message_text(
             "📤 *Як завантажити файл*\n\n"
@@ -617,14 +602,116 @@ def handle_callback(call):
         if token:
             api("POST", "/logout", token=token)
             del sessions[uid]
+        clear_state(uid)
         bot.edit_message_text(
-            "🚪 *Вихід виконано*\n\nДо побачення! Для входу: `/login логін пароль`",
+            "🚪 *Вихід виконано*\n\nДо побачення! Натисніть /login щоб увійти знову.",
             cid, mid, reply_markup=kb_main_guest())
 
-# ─── Текстові повідомлення ────────────────────────────────────────────────────
+    # Скасування FSM
+    elif data == "cancel":
+        clear_state(uid)
+        if is_logged_in(uid):
+            bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_main_auth())
+        else:
+            bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_main_guest())
+
+    # Кнопки входу/реєстрації з меню
+    elif data == "guide_login":
+        clear_state(uid)
+        set_state(uid, STATE_LOGIN_USER)
+        bot.edit_message_text(
+            "🔓 *Вхід у сховище*\n\nКрок 1/2\n👤 Введіть ваш логін:",
+            cid, mid, reply_markup=kb_cancel())
+
+    elif data == "guide_register":
+        clear_state(uid)
+        set_state(uid, STATE_REGISTER_USER)
+        bot.edit_message_text(
+            "📝 *Реєстрація*\n\nКрок 1/2\n👤 Введіть бажаний логін:",
+            cid, mid, reply_markup=kb_cancel())
+
+# ─── Текстові повідомлення + FSM ─────────────────────────────────────────────
 @bot.message_handler(func=lambda m: True)
 def handle_text(msg):
-    uid = msg.from_user.id
+    uid   = msg.from_user.id
+    text  = msg.text.strip() if msg.text else ""
+    state = get_state(uid)
+
+    # ── FSM: Вхід ────────────────────────────────────────────────────────────
+    if state == STATE_LOGIN_USER:
+        set_state(uid, STATE_LOGIN_PASS, {"username": text})
+        bot.reply_to(msg,
+            f"👤 Логін: `{text}`\n\n"
+            "Крок 2/2\n"
+            "🔑 Введіть пароль:",
+            reply_markup=kb_cancel())
+        return
+
+    if state == STATE_LOGIN_PASS:
+        data     = get_state_data(uid)
+        username = data.get("username", "")
+        password = text
+        clear_state(uid)
+        # Видаляємо повідомлення з паролем
+        try: bot.delete_message(msg.chat.id, msg.message_id)
+        except: pass
+        res, code = api("POST", "/login", json_data={"username": username, "password": password})
+        if code == 200:
+            sessions[uid] = {"token": res["token"], "username": username}
+            bot.send_message(uid,
+                f"✅ *Вхід виконано!*\n\n"
+                f"👤 Акаунт: *{username}*\n"
+                f"🔐 Сесія активна 24 години\n\n"
+                f"Оберіть дію:",
+                reply_markup=kb_main_auth())
+        else:
+            bot.send_message(uid,
+                f"❌ *Помилка входу*\n\n"
+                f"{res.get('message', 'Невірний логін або пароль')}\n\n"
+                f"Спробуйте ще раз /login",
+                reply_markup=kb_main_guest())
+        return
+
+    # ── FSM: Реєстрація ───────────────────────────────────────────────────────
+    if state == STATE_REGISTER_USER:
+        if len(text) < 3:
+            bot.reply_to(msg, "⚠️ Логін має бути мінімум 3 символи. Спробуйте ще:", reply_markup=kb_cancel())
+            return
+        set_state(uid, STATE_REGISTER_PASS, {"username": text})
+        bot.reply_to(msg,
+            f"👤 Логін: `{text}`\n\n"
+            "Крок 2/2\n"
+            "🔑 Введіть пароль (мін. 4 символи):",
+            reply_markup=kb_cancel())
+        return
+
+    if state == STATE_REGISTER_PASS:
+        data     = get_state_data(uid)
+        username = data.get("username", "")
+        password = text
+        clear_state(uid)
+        if len(password) < 4:
+            bot.reply_to(msg, "⚠️ Пароль має бути мінімум 4 символи. Почніть знову /register", reply_markup=kb_main_guest())
+            return
+        # Видаляємо повідомлення з паролем
+        try: bot.delete_message(msg.chat.id, msg.message_id)
+        except: pass
+        res, code = api("POST", "/register", json_data={"username": username, "password": password})
+        if code == 201:
+            bot.send_message(uid,
+                f"✅ *Акаунт створено!*\n\n"
+                f"👤 Логін: `{username}`\n\n"
+                f"Тепер увійдіть — натисніть /login",
+                reply_markup=kb_main_guest())
+        elif code == 409:
+            bot.send_message(uid,
+                f"⚠️ Логін `{username}` вже зайнятий.\n\nСпробуйте інший /register",
+                reply_markup=kb_main_guest())
+        else:
+            bot.send_message(uid, f"❌ {res.get('message', 'Помилка')}")
+        return
+
+    # ── Звичайні повідомлення ─────────────────────────────────────────────────
     if is_logged_in(uid):
         bot.reply_to(msg,
             "📤 Щоб завантажити файл — надішліть його як вкладення.\n\n"
@@ -633,8 +720,7 @@ def handle_text(msg):
     else:
         bot.reply_to(msg,
             "🔒 Ви не авторизовані.\n\n"
-            "Введіть: `/login логін пароль`\n"
-            "або натисніть /start",
+            "Натисніть /start або оберіть дію:",
             reply_markup=kb_main_guest())
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────
