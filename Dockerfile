@@ -3,6 +3,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN mkdir -p data_storage
+RUN ls -la && mkdir -p data_storage
 EXPOSE 8000
 CMD ["python", "bot.py"]
