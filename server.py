@@ -22,7 +22,7 @@ USERS_FILE      = "./users.json"
 TOKENS_FILE     = "./tokens.json"
 SECRET_KEY_FILE = "./secret.key"
 
-MAX_FILE_SIZE   = 4 * 1024 * 1024 * 1024   # 2 GB
+MAX_FILE_SIZE   = 500 * 1024 * 1024   # 500 MB — ліміт одного файлу
 CHUNK_SIZE      = 4 * 1024 * 1024     # 4 MB — розмір буфера читання
 TOKEN_TTL       = 86400               # 24 години
 RATE_LIMIT      = 60                  # максимум запитів за хвилину з одного IP
@@ -526,6 +526,21 @@ class CloudHandler(BaseHTTPRequestHandler):
                 lines = f.readlines()[-200:]          # останні 200 рядків
             self.send_json(200, {"lines": [l.rstrip() for l in lines]})
 
+        # / або /demo — віддаємо demo.html
+        elif path in ("/", "/demo", "/demo.html"):
+            demo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.html")
+            if not os.path.exists(demo_path):
+                self.send_json(404, {"status": "error", "message": "demo.html не знайдено"})
+                return
+            with open(demo_path, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(content)
+
         else:
             self.send_json(404, {"status": "error", "message": "Не знайдено"})
 
@@ -562,7 +577,8 @@ def _cleanup_loop():
 
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────
-def run_server(port: int = 8000):
+def run_server(port: int = None):
+    port = port or int(os.environ.get("PORT", 8000))
     threading.Thread(target=_cleanup_loop, daemon=True).start()
     server = HTTPServer(("0.0.0.0", port), CloudHandler)
     logger.info(f"{'='*55}")

@@ -53,8 +53,8 @@ else:
     print("⚠️ Сервер не відповів за 15с, але продовжуємо...")
 
 # ─── Налаштування ─────────────────────────────────────────────────────────────
-BOT_TOKEN    = "8826690405:AAG3iICZmmw9D509ixI8qndm7jju7eKZd_M"   # отримати у @BotFather
-SERVER_URL   = "http://localhost:8000"      # адреса server.py
+BOT_TOKEN    = "ВАШ_НОВИЙ_ТОКЕН_ВІД_BOTFATHER"   # отримати у @BotFather
+SERVER_URL   = os.environ.get("SERVER_URL", "http://localhost:" + os.environ.get("PORT", "8000"))      # адреса server.py
 MAX_TG_SIZE  = 50 * 1024 * 1024            # Telegram ліміт: 50 MB на файл
 
 bot = telebot.TeleBot(BOT_TOKEN)
