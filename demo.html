@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>Хмарне сховище — демо</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f5f5f5;padding:20px;color:#222}
+h1{font-size:20px;font-weight:600;margin-bottom:16px;color:#1a1a1a}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.stat{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center}
+.stat-val{font-size:26px;font-weight:600;color:#222}
+.stat-lbl{font-size:12px;color:#888;margin-top:3px}
+.sat-row{display:flex;gap:10px;margin-bottom:14px}
+.sat{flex:1;background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px 14px}
+.sat-name{font-size:14px;font-weight:600;margin-bottom:5px}
+.badge{display:inline-block;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:600}
+.badge-ok{background:#d1fae5;color:#065f46}
+.badge-off{background:#f3f4f6;color:#6b7280}
+.sat-cnt{font-size:11px;color:#888;margin-top:4px}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:12px}
+.card-title{font-size:13px;font-weight:600;color:#555;margin-bottom:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mb8{margin-bottom:8px}
+input[type=text],input[type=password]{flex:1;min-width:80px;padding:8px 10px;border:1px solid #ccc;border-radius:8px;font-size:13px;outline:none}
+input:focus{border-color:#3b82f6}
+button{padding:8px 14px;border-radius:8px;border:1px solid #ccc;background:#fff;font-size:13px;cursor:pointer;font-family:Arial,sans-serif}
+button:hover{background:#f3f4f6}
+.btn-g{background:#d1fae5;border-color:#059669;color:#065f46}
+.btn-g:hover{background:#a7f3d0}
+.btn-r{background:#fee2e2;border-color:#dc2626;color:#7f1d1d}
+.btn-r:hover{background:#fecaca}
+.btn-sm{padding:4px 10px;font-size:11px}
+.log{background:#111;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;min-height:60px;max-height:180px;overflow-y:auto;color:#aaa}
+.l{padding:2px 0;line-height:1.5}
+.ok{color:#34d399}.er{color:#f87171}.in{color:#60a5fa}.wa{color:#fbbf24}
+.mt8{margin-top:8px}
+.flist{display:flex;flex-direction:column;gap:6px;min-height:28px}
+.fi{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f9f9f9;border-radius:8px;border:1px solid #eee;font-size:13px}
+.fn{flex:1;font-family:monospace;font-size:12px}
+.fs{font-size:11px;color:#888;white-space:nowrap}
+.empty{color:#aaa;font-size:13px;padding:4px 0}
+</style>
+</head>
+<body>
+<h1>Локальне хмарне сховище — демонстрація</h1>
+
+<div class="stats">
+  <div class="stat"><div class="stat-val" id="su">0</div><div class="stat-lbl">завантажень</div></div>
+  <div class="stat"><div class="stat-val" id="sb">0</div><div class="stat-lbl">байт оброблено</div></div>
+  <div class="stat"><div class="stat-val" id="sf">0</div><div class="stat-lbl">файлів у сховищі</div></div>
+</div>
+
+<div class="sat-row">
+  <div class="sat">
+    <div class="sat-name">&#128421; SAT-1</div>
+    <span class="badge badge-off" id="b1">очікування</span>
+    <div class="sat-cnt">запитів: <span id="c1">0</span></div>
+  </div>
+  <div class="sat">
+    <div class="sat-name">&#128421; SAT-2</div>
+    <span class="badge badge-off" id="b2">очікування</span>
+    <div class="sat-cnt">запитів: <span id="c2">0</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">&#128100; Авторизація</div>
+  <div class="row mb8">
+    <input type="text" id="u" value="ivan" placeholder="логін">
+    <input type="password" id="p" value="pass123" placeholder="пароль">
+  </div>
+  <div class="row">
+    <button onclick="reg()">&#10133; Реєстрація</button>
+    <button class="btn-g" onclick="login()">&#128275; Увійти</button>
+    <button class="btn-r" onclick="badlogin()">&#128274; Невірний пароль</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">&#128229; Завантаження файлу</div>
+  <div class="row mb8">
+    <input type="text" id="fn" value="document.txt" placeholder="назва файлу" style="max-width:170px">
+    <input type="text" id="fc" value="Секретний документ КНУБА 2026" placeholder="вміст">
+  </div>
+  <div class="row">
+    <button class="btn-g" onclick="upload()">&#128229; Завантажити</button>
+    <button class="btn-r" onclick="uploadNoAuth()">&#128683; Без токена (тест захисту)</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">&#128193; Файли у сховищі</div>
+  <div class="flist" id="fl"><div class="empty">Спочатку увійдіть та завантажте файл</div></div>
+  <div class="row mt8">
+    <button onclick="listFiles()">&#8635; Оновити список</button>
+    <button onclick="status()">&#128202; Стан системи</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">&#128203; Журнал запитів</div>
+  <div class="log" id="log"><div class="l in">— очікування дій —</div></div>
+  <div class="row mt8">
+    <button onclick="document.getElementById('log').innerHTML=''">Очистити</button>
+  </div>
+</div>
+
+<script>
+var BASE='http://localhost:8000',TOK=null,n1=0,n2=0,ups=0,byt=0;
+function lg(m,c){var d=document.getElementById('log'),t=new Date().toLocaleTimeString('uk-UA');d.innerHTML+='<div class="l '+c+'">['+t+'] '+m+'</div>';d.scrollTop=d.scrollHeight;}
+function flash(i){var b=document.getElementById('b'+i),c=document.getElementById('c'+i);b.textContent='активний';b.className='badge badge-ok';setTimeout(function(){b.textContent='очікування';b.className='badge badge-off';},1200);if(i===1){n1++;c.textContent=n1;}else{n2++;c.textContent=n2;}}
+function updStats(){document.getElementById('su').textContent=ups;document.getElementById('sb').textContent=byt>1024?Math.round(byt/1024)+'KB':byt;listFiles();}
+async function r(method,path,body,token,txt){
+  var h={'Content-Type':'application/json'};
+  if(token)h['Authorization']='Bearer '+token;
+  try{
+    var res=await fetch(BASE+path,{method:method,headers:h,body:body?(typeof body==='string'?body:JSON.stringify(body)):null});
+    if(txt)return{ok:res.ok,s:res.status,d:await res.text()};
+    return{ok:res.ok,s:res.status,d:await res.json()};
+  }catch(e){return{ok:false,s:0,d:{message:'Сервер недоступний — запустіть python server.py'}};}
+}
+async function reg(){var u=document.getElementById('u').value,p=document.getElementById('p').value;lg('POST /register {"username":"'+u+'"}','in');var x=await r('POST','/register',{username:u,password:p});if(x.ok)lg(x.s+' OK — '+x.d.message,'ok');else lg(x.s+' — '+x.d.message,'er');}
+async function login(){var u=document.getElementById('u').value,p=document.getElementById('p').value;lg('POST /login {"username":"'+u+'","password":"***"}','in');var x=await r('POST','/login',{username:u,password:p});if(x.ok){TOK=x.d.token;lg('200 OK — токен: '+TOK.slice(0,24)+'...','ok');}else lg(x.s+' — '+x.d.message,'er');}
+async function badlogin(){var u=document.getElementById('u').value;lg('POST /login {"password":"WRONG123"}','wa');var x=await r('POST','/login',{username:u,password:'WRONG123'});lg(x.s+' — '+x.d.message+' ← захист спрацював!','er');}
+async function upload(){if(!TOK){lg('Спочатку увійдіть!','er');return;}var fn=document.getElementById('fn').value,fc=document.getElementById('fc').value,si=(n1+n2)%2===0?1:2;lg('POST /upload/'+fn+' ['+fc.length+' байт] → SAT-'+si,'in');var x=await r('POST','/upload/'+fn,fc,TOK,false);if(x.ok){ups++;byt+=fc.length;flash(si);lg('200 OK — зашифровано | '+x.d.size+' байт | checksum: '+(x.d.checksum||'').slice(0,16)+'...','ok');updStats();}else lg(x.s+' — '+x.d.message,'er');}
+async function uploadNoAuth(){var fn=document.getElementById('fn').value;lg('POST /upload/'+fn+' [БЕЗ ТОКЕНА]','wa');var x=await r('POST','/upload/'+fn,'test',null);lg(x.s+' — '+x.d.message+' ← заблоковано!','er');}
+async function listFiles(){if(!TOK){document.getElementById('fl').innerHTML='<div class="empty">Спочатку увійдіть</div>';return;}var x=await r('GET','/files',null,TOK);if(!x.ok){document.getElementById('fl').innerHTML='<div class="empty">Помилка</div>';return;}var f=x.d.files||[];document.getElementById('sf').textContent=f.length;if(!f.length){document.getElementById('fl').innerHTML='<div class="empty">Сховище порожнє</div>';return;}document.getElementById('fl').innerHTML=f.map(function(i){return'<div class="fi"><span class="fn">'+i.name+'</span><span class="fs">'+i.size_encrypted+' байт (зашифровано)</span><button class="btn-g btn-sm" onclick="dl(\''+i.name+'\')">&#128229; отримати</button><button class="btn-r btn-sm" onclick="del(\''+i.name+'\')">&#128465; видалити</button></div>';}).join('');}
+async function dl(fn){lg('GET /download/'+fn,'in');var x=await r('GET','/download/'+fn,null,TOK,true);if(x.ok)lg('200 OK — розшифровано: "'+String(x.d).slice(0,60)+'"','ok');else lg(x.s+' — помилка','er');}
+async function del(fn){lg('DELETE /delete/'+fn,'wa');var x=await r('DELETE','/delete/'+fn,null,TOK);if(x.ok){lg('200 OK — '+x.d.message,'ok');updStats();}else lg(x.s+' — '+x.d.message,'er');}
+async function status(){lg('GET /status','in');var x=await r('GET','/status');if(x.ok){lg('Система активна | uploads: '+x.d.storage_stats.uploads+' | байт: '+x.d.storage_stats.total_bytes,'ok');lg('SAT-1: '+x.d.satellites[0].status+' | SAT-2: '+x.d.satellites[1].status,'ok');}else lg(x.d.message,'er');}
+</script>
+</body>
+</html>
