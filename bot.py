@@ -3,9 +3,7 @@ KNUBAVaultBot — Професійний Telegram-бот хмарного схо
 """
 
 import os, io, sys, time, threading, requests, telebot
-from telebot.types import (InlineKeyboardMarkup, InlineKeyboardButton,
-                           BotCommand, ReplyKeyboardMarkup, KeyboardButton,
-                           ReplyKeyboardRemove)
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 # ─── Автозапуск server.py ─────────────────────────────────────────────────────
 def start_server():
@@ -14,117 +12,89 @@ def start_server():
         import server as cloud_server
         cloud_server.run_server()
     except ImportError:
-        print("❌ server.py не знайдено!")
+        print("server.py не знайдено!")
     except Exception as e:
-        print(f"❌ Помилка сервера: {e}")
+        print(f"Помилка сервера: {e}")
 
-_server_thread = threading.Thread(target=start_server, daemon=True)
-_server_thread.start()
+threading.Thread(target=start_server, daemon=True).start()
 
-print("⏳ Очікування запуску сервера...")
+print("Очікування сервера...")
 for _ in range(15):
     time.sleep(1)
     try:
-        r = requests.get("http://localhost:8000/status", timeout=2)
-        if r.status_code == 200:
-            print("✅ Сервер готовий!")
+        if requests.get("http://localhost:8000/status", timeout=2).status_code == 200:
+            print("Сервер готовий!")
             break
-    except Exception:
+    except:
         pass
-else:
-    print("⚠️ Сервер не відповів за 15с, продовжуємо...")
 
 # ─── Налаштування ─────────────────────────────────────────────────────────────
-BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
-SERVER_URL  = os.environ.get("SERVER_URL", "http://localhost:" + os.environ.get("PORT", "8000"))
-MAX_TG_SIZE = 50 * 1024 * 1024
+BOT_TOKEN  = os.environ.get("BOT_TOKEN", "")
+SERVER_URL = "http://localhost:" + os.environ.get("PORT", "8000")
+MAX_SIZE   = 50 * 1024 * 1024
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
-# ─── Встановлення команд (випадаючий список /) ────────────────────────────────
-def set_bot_commands():
-    commands = [
-        BotCommand("start",    "🏠 Головне меню"),
-        BotCommand("login",    "🔓 Увійти у сховище"),
-        BotCommand("register", "📝 Реєстрація нового акаунту"),
-        BotCommand("files",    "📁 Переглянути мої файли"),
-        BotCommand("upload",   "📤 Інструкція завантаження"),
-        BotCommand("status",   "📊 Стан системи"),
-        BotCommand("profile",  "👤 Мій профіль"),
-        BotCommand("help",     "❓ Допомога"),
-        BotCommand("logout",   "🚪 Вийти зі сховища"),
-    ]
-    bot.set_my_commands(commands)
+# ─── Стани ───────────────────────────────────────────────────────────────────
+sessions = {}   # uid -> {token, username}
+states   = {}   # uid -> {state, data}
 
-# ─── Сесії та FSM стани ─────────────────────────────────────────────────────
-sessions: dict[int, dict] = {}   # uid -> {token, username}
-states:   dict[int, dict] = {}   # uid -> {state, data}
+S_LOGIN_USER    = "login_user"
+S_LOGIN_PASS    = "login_pass"
+S_REG_USER      = "reg_user"
+S_REG_PASS      = "reg_pass"
 
-# Стани FSM
-STATE_LOGIN_USER    = "login_user"
-STATE_LOGIN_PASS    = "login_pass"
-STATE_REGISTER_USER = "register_user"
-STATE_REGISTER_PASS = "register_pass"
+def tok(uid):      return sessions.get(uid, {}).get("token")
+def uname(uid):    return sessions.get(uid, {}).get("username", "")
+def logged(uid):   return uid in sessions
+def state(uid):    return states.get(uid, {}).get("state")
+def sdata(uid):    return states.get(uid, {}).get("data", {})
+def setst(uid, s, d=None): states[uid] = {"state": s, "data": d or {}}
+def clrst(uid):    states.pop(uid, None)
 
-def get_token(uid):    return sessions.get(uid, {}).get("token")
-def get_username(uid): return sessions.get(uid, {}).get("username", "")
-def is_logged_in(uid): return uid in sessions
-
-def set_state(uid, state, data=None):
-    states[uid] = {"state": state, "data": data or {}}
-
-def get_state(uid):
-    return states.get(uid, {}).get("state")
-
-def get_state_data(uid):
-    return states.get(uid, {}).get("data", {})
-
-def clear_state(uid):
-    states.pop(uid, None)
-
-def kb_cancel():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("❌ Скасувати", callback_data="cancel"))
-    return kb
-
-# ─── Утиліти ──────────────────────────────────────────────────────────────────
-def fmt(b):
-    if b >= 1073741824: return f"{b/1073741824:.1f} GB"
-    if b >= 1048576:    return f"{b/1048576:.1f} MB"
-    if b >= 1024:       return f"{b/1024:.1f} KB"
-    return f"{b} B"
-
-def api(method, path, token=None, json_data=None, raw_data=None):
+# ─── API ──────────────────────────────────────────────────────────────────────
+def api(method, path, token=None, json_data=None, raw=None):
     url = SERVER_URL + path
-    headers = {}
-    if token: headers["Authorization"] = f"Bearer {token}"
+    h = {}
+    if token: h["Authorization"] = f"Bearer {token}"
     try:
         if method == "GET":
-            r = requests.get(url, headers=headers, timeout=30)
-        elif method == "POST" and raw_data is not None:
-            headers["Content-Type"] = "application/octet-stream"
-            r = requests.post(url, headers=headers, data=raw_data, timeout=60)
+            r = requests.get(url, headers=h, timeout=30)
+        elif method == "POST" and raw:
+            h["Content-Type"] = "application/octet-stream"
+            r = requests.post(url, headers=h, data=raw, timeout=60)
         elif method == "POST":
-            r = requests.post(url, headers=headers, json=json_data, timeout=10)
-        elif method == "DELETE":
-            r = requests.delete(url, headers=headers, timeout=10)
+            r = requests.post(url, headers=h, json=json_data, timeout=10)
         else:
-            return {"error": "Unknown method"}, 0
-        if r.headers.get("Content-Type", "").startswith("application/json"):
+            r = requests.delete(url, headers=h, timeout=10)
+        if "application/json" in r.headers.get("Content-Type",""):
             return r.json(), r.status_code
         return r.content, r.status_code
-    except requests.exceptions.ConnectionError:
-        return {"error": "❌ Сервер недоступний"}, 0
-    except Exception as e:
-        return {"error": str(e)}, 0
+    except:
+        return {"error": "Сервер недоступний"}, 0
+
+# ─── Розміри ──────────────────────────────────────────────────────────────────
+def fmt(b):
+    if b>=1073741824: return f"{b/1073741824:.1f} GB"
+    if b>=1048576:    return f"{b/1048576:.1f} MB"
+    if b>=1024:       return f"{b/1024:.1f} KB"
+    return f"{b} B"
 
 # ─── Клавіатури ───────────────────────────────────────────────────────────────
-def kb_main_auth():
-    """Головне меню для авторизованого користувача."""
+def kb_guest():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("🔓 Увійти",       callback_data="do_login"),
+        InlineKeyboardButton("📝 Реєстрація",   callback_data="do_register"),
+        InlineKeyboardButton("📊 Стан системи", callback_data="status"),
+        InlineKeyboardButton("❓ Допомога",      callback_data="help"),
+    )
+    return kb
+
+def kb_user():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
         InlineKeyboardButton("📁 Мої файли",     callback_data="files"),
-        InlineKeyboardButton("📤 Завантажити",   callback_data="how_upload"),
         InlineKeyboardButton("📊 Стан системи",  callback_data="status"),
         InlineKeyboardButton("👤 Профіль",        callback_data="profile"),
         InlineKeyboardButton("🌐 Веб-інтерфейс", callback_data="webapp"),
@@ -132,602 +102,452 @@ def kb_main_auth():
     )
     return kb
 
-def kb_main_guest():
-    """Головне меню для гостя."""
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("🔓 Увійти",        callback_data="guide_login"),
-        InlineKeyboardButton("📝 Реєстрація",    callback_data="guide_register"),
-        InlineKeyboardButton("📊 Стан системи",  callback_data="status"),
-        InlineKeyboardButton("❓ Допомога",       callback_data="help"),
-    )
+def kb_cancel():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("❌ Скасувати", callback_data="cancel"))
+    return kb
+
+def kb_back():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("↩️ Назад", callback_data="menu"))
     return kb
 
 def kb_files(files):
     kb = InlineKeyboardMarkup(row_width=1)
-    for f in files[:20]:  # максимум 20 файлів
-        size = fmt(f["size_encrypted"])
+    for f in files[:20]:
         kb.add(InlineKeyboardButton(
-            f"📄 {f['name']}  •  {size}",
+            f"📄 {f['name']}  •  {fmt(f['size_encrypted'])}",
             callback_data=f"file:{f['name'][:50]}"
         ))
     kb.add(
-        InlineKeyboardButton("🔄 Оновити список", callback_data="files"),
-        InlineKeyboardButton("↩️ Головне меню",   callback_data="menu"),
+        InlineKeyboardButton("🔄 Оновити", callback_data="files"),
+        InlineKeyboardButton("↩️ Меню",    callback_data="menu"),
     )
     return kb
 
-def kb_file_actions(filename):
+def kb_file(name):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("⬇️ Завантажити",  callback_data=f"dl:{filename[:50]}"),
-        InlineKeyboardButton("🗑 Видалити",     callback_data=f"del_confirm:{filename[:50]}"),
-        InlineKeyboardButton("↩️ До списку",    callback_data="files"),
+        InlineKeyboardButton("⬇️ Скачати",   callback_data=f"dl:{name[:50]}"),
+        InlineKeyboardButton("🗑 Видалити",  callback_data=f"del_ask:{name[:50]}"),
+        InlineKeyboardButton("↩️ До списку", callback_data="files"),
     )
     return kb
 
-def kb_confirm_delete(filename):
+def kb_del_confirm(name):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("✅ Так, видалити",  callback_data=f"del:{filename[:50]}"),
-        InlineKeyboardButton("❌ Скасувати",      callback_data=f"file:{filename[:50]}"),
+        InlineKeyboardButton("✅ Так, видалити", callback_data=f"del:{name[:50]}"),
+        InlineKeyboardButton("❌ Скасувати",     callback_data=f"file:{name[:50]}"),
     )
     return kb
 
-def kb_back_menu():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("↩️ Головне меню", callback_data="menu"))
-    return kb
+# ─── Команди ──────────────────────────────────────────────────────────────────
+def set_commands():
+    bot.set_my_commands([
+        BotCommand("start",    "🏠 Головне меню"),
+        BotCommand("login",    "🔓 Увійти у сховище"),
+        BotCommand("register", "📝 Реєстрація"),
+        BotCommand("files",    "📁 Мої файли"),
+        BotCommand("profile",  "👤 Мій профіль"),
+        BotCommand("status",   "📊 Стан системи"),
+        BotCommand("help",     "❓ Допомога"),
+        BotCommand("logout",   "🚪 Вийти"),
+    ])
 
 # ─── /start ───────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
-    uid = msg.from_user.id
+    uid  = msg.from_user.id
     name = msg.from_user.first_name or "користувачу"
-
-    if is_logged_in(uid):
-        uname = get_username(uid)
-        text = (f"👋 З поверненням, *{uname}*!\n\n"
-                f"☁️ *KNUBAVaultBot* — ваше захищене хмарне сховище\n\n"
-                f"Оберіть дію:")
-        bot.send_message(uid, text, reply_markup=kb_main_auth())
+    clrst(uid)
+    if logged(uid):
+        bot.send_message(uid,
+            f"👋 З поверненням, *{uname(uid)}*!\n\nОберіть дію:",
+            reply_markup=kb_user())
     else:
-        text = (f"👋 Вітаю, *{name}*!\n\n"
-                f"☁️ *KNUBAVaultBot* — захищене хмарне сховище\n\n"
-                f"🔐 Усі файли шифруються алгоритмом *AES-128-CBC*\n"
-                f"📦 Максимальний розмір файлу: *50 MB*\n"
-                f"🌐 Веб-інтерфейс: [відкрити]({SERVER_URL})\n\n"
-                f"Для початку роботи — увійдіть або зареєструйтесь:")
-        bot.send_message(uid, text, reply_markup=kb_main_guest(),
-                        disable_web_page_preview=True)
+        bot.send_message(uid,
+            f"👋 Вітаю, *{name}*!\n\n"
+            f"☁️ *KNUBAVaultBot* — захищене хмарне сховище\n\n"
+            f"🔐 Шифрування: *AES-128-CBC*\n"
+            f"📦 Ліміт файлу: *50 MB*\n\n"
+            f"Оберіть дію:",
+            reply_markup=kb_guest())
 
 # ─── /help ────────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["help"])
 def cmd_help(msg):
-    text = (
+    bot.send_message(msg.from_user.id,
         "❓ *Довідка KNUBAVaultBot*\n\n"
-        "*Команди:*\n"
         "/start — головне меню\n"
-        "/register `логін пароль` — реєстрація\n"
-        "/login `логін пароль` — вхід\n"
+        "/login — увійти у сховище\n"
+        "/register — реєстрація\n"
         "/files — список файлів\n"
-        "/upload — як завантажити файл\n"
-        "/status — стан системи\n"
         "/profile — ваш профіль\n"
-        "/logout — вихід\n\n"
-        "*Завантаження файлів:*\n"
-        "Просто надішліть будь-який файл у чат після входу — він автоматично зашифрується і збережеться.\n\n"
-        "*Підтримувані типи:*\n"
-        "📄 Документи · 🖼 Фото · 🎥 Відео · 🎵 Аудіо · 🎤 Голосові\n\n"
-        f"🌐 Веб-інтерфейс: {SERVER_URL}"
-    )
-    bot.send_message(msg.from_user.id, text, reply_markup=kb_back_menu(),
-                    disable_web_page_preview=True)
-
-# ─── /register ────────────────────────────────────────────────────────────────
-@bot.message_handler(commands=["register"])
-def cmd_register(msg):
-    uid = msg.from_user.id
-    if is_logged_in(uid):
-        bot.reply_to(msg, f"⚠️ Ви вже авторизовані як *{get_username(uid)}*\n\nСпочатку /logout", reply_markup=kb_main_auth())
-        return
-    set_state(uid, STATE_REGISTER_USER)
-    bot.reply_to(msg,
-        "📝 *Реєстрація нового акаунту*\n\n"
-        "Крок 1/2\n"
-        "👤 Введіть бажаний логін:",
-        reply_markup=kb_cancel())
+        "/status — стан системи\n"
+        "/logout — вийти\n\n"
+        "📤 *Завантаження файлів:*\n"
+        "Надішліть будь-який файл у чат після входу.",
+        reply_markup=kb_back())
 
 # ─── /login ───────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["login"])
 def cmd_login(msg):
     uid = msg.from_user.id
-    if is_logged_in(uid):
-        bot.reply_to(msg, f"⚠️ Ви вже авторизовані як *{get_username(uid)}*", reply_markup=kb_main_auth())
+    clrst(uid)
+    if logged(uid):
+        bot.reply_to(msg, f"✅ Ви вже авторизовані як *{uname(uid)}*", reply_markup=kb_user())
         return
-    set_state(uid, STATE_LOGIN_USER)
+    setst(uid, S_LOGIN_USER)
     bot.reply_to(msg,
         "🔓 *Вхід у сховище*\n\n"
-        "Крок 1/2\n"
+        "Крок 1 з 2\n"
         "👤 Введіть ваш логін:",
+        reply_markup=kb_cancel())
+
+# ─── /register ────────────────────────────────────────────────────────────────
+@bot.message_handler(commands=["register"])
+def cmd_register(msg):
+    uid = msg.from_user.id
+    clrst(uid)
+    if logged(uid):
+        bot.reply_to(msg, f"✅ Ви вже авторизовані як *{uname(uid)}*", reply_markup=kb_user())
+        return
+    setst(uid, S_REG_USER)
+    bot.reply_to(msg,
+        "📝 *Реєстрація нового акаунту*\n\n"
+        "Крок 1 з 2\n"
+        "👤 Введіть бажаний логін:",
         reply_markup=kb_cancel())
 
 # ─── /logout ──────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["logout"])
 def cmd_logout(msg):
     uid = msg.from_user.id
-    token = get_token(uid)
-    if token:
-        api("POST", "/logout", token=token)
+    clrst(uid)
+    if tok(uid):
+        api("POST", "/logout", token=tok(uid))
         del sessions[uid]
-        bot.reply_to(msg, "🚪 *Вихід виконано*\n\nДо побачення! Для повторного входу: `/login логін пароль`")
-    else:
-        bot.reply_to(msg, "⚠️ Ви не авторизовані.")
+    bot.reply_to(msg,
+        "🚪 *Вихід виконано*\n\nДо побачення! Натисніть /start",
+        reply_markup=kb_guest())
 
 # ─── /files ───────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["files"])
 def cmd_files(msg):
     uid = msg.from_user.id
-    token = get_token(uid)
-    if not token:
-        bot.reply_to(msg, "🔒 Спочатку увійдіть: `/login логін пароль`")
+    if not logged(uid):
+        bot.reply_to(msg, "🔒 Спочатку увійдіть: /login")
         return
-    _show_files(uid, msg.chat.id)
-
-def _show_files(uid, chat_id, message_id=None):
-    token = get_token(uid)
-    res, code = api("GET", "/files", token=token)
-    if code != 200:
-        text = f"❌ {res.get('message', 'Помилка')}"
-        if message_id:
-            bot.edit_message_text(text, chat_id, message_id)
-        else:
-            bot.send_message(chat_id, text)
-        return
-    files = res.get("files", [])
-    quota = res.get("quota", {})
-    count = len(files)
-
-    if not files:
-        text = ("📂 *Сховище порожнє*\n\n"
-                "Надішліть будь-який файл у чат — він автоматично збережеться.")
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("↩️ Головне меню", callback_data="menu"))
-    else:
-        text = (f"📁 *Ваші файли* — {count} шт.\n"
-                f"💾 Зайнято: {fmt(quota.get('bytes_encrypted', 0))}\n\n"
-                f"Оберіть файл для дій:")
-        kb = kb_files(files)
-
-    if message_id:
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
-    else:
-        bot.send_message(chat_id, text, reply_markup=kb)
-
-# ─── /upload ──────────────────────────────────────────────────────────────────
-@bot.message_handler(commands=["upload"])
-def cmd_upload(msg):
-    uid = msg.from_user.id
-    if not is_logged_in(uid):
-        bot.reply_to(msg, "🔒 Спочатку увійдіть: `/login логін пароль`")
-        return
-    bot.reply_to(msg,
-        "📤 *Як завантажити файл*\n\n"
-        "Просто надішліть файл прямо в цей чат!\n\n"
-        "✅ Підтримуються:\n"
-        "• 📄 Будь-які документи\n"
-        "• 🖼 Фотографії\n"
-        "• 🎥 Відео\n"
-        "• 🎵 Аудіо файли\n"
-        "• 🎤 Голосові повідомлення\n\n"
-        f"⚠️ Максимальний розмір: *50 MB*\n\n"
-        "Файл буде автоматично зашифрований і збережений у сховищі.")
+    show_files(uid, msg.chat.id)
 
 # ─── /status ──────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["status"])
 def cmd_status(msg):
     res, code = api("GET", "/status")
     if code != 200:
-        bot.reply_to(msg, f"❌ Сервер недоступний")
+        bot.reply_to(msg, "❌ Сервер недоступний")
         return
-    _send_status(msg.from_user.id, res)
-
-def _send_status(uid, res, chat_id=None, message_id=None):
-    sats = res.get("satellites", [])
-    st   = res.get("storage_stats", {})
-    ts   = res.get("timestamp", "")[:19].replace("T", " ")
-
-    sat_lines = ""
-    for s in sats:
-        icon = "🟢" if s["status"] == "active" else "🔴"
-        sat_lines += f"{icon} *{s['id']}* — {s.get('requests', 0)} запитів\n"
-
-    text = (
-        f"📊 *Стан системи KNUBAVault*\n\n"
-        f"🕐 Оновлено: `{ts}`\n\n"
-        f"*Статистика:*\n"
-        f"📤 Завантажень: `{st.get('uploads', 0)}`\n"
-        f"⬇️ Скачувань: `{st.get('downloads', 0)}`\n"
-        f"🗑 Видалень: `{st.get('deletes', 0)}`\n"
-        f"💾 Оброблено: `{fmt(st.get('total_bytes', 0))}`\n\n"
-        f"*Сервери:*\n{sat_lines}\n"
-        f"🔒 Rate limit: `{res.get('rate_limit', '')}`\n"
-        f"📦 Макс. файл: `{fmt(res.get('max_file_size', 0))}`"
-    )
-    kb = InlineKeyboardMarkup()
-    kb.add(
-        InlineKeyboardButton("🔄 Оновити", callback_data="status"),
-        InlineKeyboardButton("↩️ Меню",    callback_data="menu"),
-    )
-    if message_id:
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
-    else:
-        bot.send_message(uid, text, reply_markup=kb)
+    send_status(msg.from_user.id, res)
 
 # ─── /profile ─────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["profile"])
 def cmd_profile(msg):
     uid = msg.from_user.id
-    token = get_token(uid)
-    if not token:
-        bot.reply_to(msg, "🔒 Спочатку увійдіть: `/login логін пароль`")
+    if not logged(uid):
+        bot.reply_to(msg, "🔒 Спочатку увійдіть: /login")
         return
-    _show_profile(uid, msg.chat.id)
-
-def _show_profile(uid, chat_id, message_id=None):
-    token    = get_token(uid)
-    username = get_username(uid)
-    res, code = api("GET", "/files", token=token)
-    quota = res.get("quota", {}) if code == 200 else {}
-
-    text = (
-        f"👤 *Профіль*\n\n"
-        f"👤 Логін: `{username}`\n"
-        f"📁 Файлів: `{quota.get('files', 0)}`\n"
-        f"💾 Зайнято: `{fmt(quota.get('bytes_encrypted', 0))}`\n"
-        f"🔐 Шифрування: `AES-128-CBC (Fernet)`\n"
-        f"⏱ Сесія: активна\n\n"
-        f"🌐 [Веб-інтерфейс]({SERVER_URL})"
-    )
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("📁 Мої файли",  callback_data="files"),
-        InlineKeyboardButton("↩️ Головне меню", callback_data="menu"),
-    )
-    if message_id:
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb,
-                             disable_web_page_preview=True)
-    else:
-        bot.send_message(chat_id, text, reply_markup=kb,
-                        disable_web_page_preview=True)
+    show_profile(uid, msg.chat.id)
 
 # ─── Завантаження файлів ──────────────────────────────────────────────────────
-@bot.message_handler(content_types=["document", "photo", "video", "audio", "voice"])
-def handle_file_upload(msg):
-    uid   = msg.from_user.id
-    token = get_token(uid)
-    if not token:
-        bot.reply_to(msg,
-            "🔒 *Потрібна авторизація*\n\n"
-            "Увійдіть у сховище: `/login логін пароль`")
+@bot.message_handler(content_types=["document","photo","video","audio","voice"])
+def handle_file(msg):
+    uid = msg.from_user.id
+    if not logged(uid):
+        bot.reply_to(msg, "🔒 Спочатку увійдіть: /login")
         return
 
     if msg.document:
-        file_info = msg.document
-        filename  = file_info.file_name or f"file_{int(time.time())}"
-        file_size = file_info.file_size or 0
+        fi = msg.document; fn = fi.file_name or f"file_{int(time.time())}"; fs = fi.file_size or 0
     elif msg.photo:
-        file_info = msg.photo[-1]
-        filename  = f"photo_{int(time.time())}.jpg"
-        file_size = file_info.file_size or 0
+        fi = msg.photo[-1]; fn = f"photo_{int(time.time())}.jpg"; fs = fi.file_size or 0
     elif msg.video:
-        file_info = msg.video
-        filename  = msg.video.file_name or f"video_{int(time.time())}.mp4"
-        file_size = file_info.file_size or 0
+        fi = msg.video; fn = fi.file_name or f"video_{int(time.time())}.mp4"; fs = fi.file_size or 0
     elif msg.audio:
-        file_info = msg.audio
-        filename  = msg.audio.file_name or f"audio_{int(time.time())}.mp3"
-        file_size = file_info.file_size or 0
+        fi = msg.audio; fn = fi.file_name or f"audio_{int(time.time())}.mp3"; fs = fi.file_size or 0
     elif msg.voice:
-        file_info = msg.voice
-        filename  = f"voice_{int(time.time())}.ogg"
-        file_size = file_info.file_size or 0
+        fi = msg.voice; fn = f"voice_{int(time.time())}.ogg"; fs = fi.file_size or 0
     else:
         return
 
-    if file_size > MAX_TG_SIZE:
-        bot.reply_to(msg,
-            f"❌ *Файл завеликий*\n\n"
-            f"Розмір: `{fmt(file_size)}`\n"
-            f"Ліміт Telegram: `{fmt(MAX_TG_SIZE)}`")
+    if fs > MAX_SIZE:
+        bot.reply_to(msg, f"❌ Файл завеликий: {fmt(fs)}\nЛіміт: {fmt(MAX_SIZE)}")
         return
 
-    progress_msg = bot.reply_to(msg,
-        f"⏳ *Зберігаю* `{filename}`...\n"
-        f"📦 Розмір: `{fmt(file_size)}`")
+    pm = bot.reply_to(msg, f"⏳ Зберігаю `{fn}`...")
     try:
-        tg_file   = bot.get_file(file_info.file_id)
-        file_data = bot.download_file(tg_file.file_path)
-        res, code = api("POST", f"/upload/{filename}", token=token, raw_data=file_data)
-
+        data = bot.download_file(bot.get_file(fi.file_id).file_path)
+        res, code = api("POST", f"/upload/{fn}", token=tok(uid), raw=data)
         if code == 200:
             bot.edit_message_text(
-                f"✅ *Файл збережено!*\n\n"
-                f"📄 Назва: `{filename}`\n"
-                f"📦 Оригінал: `{fmt(res.get('size', 0))}`\n"
-                f"🔐 Зашифровано: `{fmt(res.get('size_enc', 0))}`\n"
-                f"🖥 Сервер: `{res.get('routed_via', '?')}`\n"
-                f"🔑 MD5: `{res.get('md5', '')[:16]}...`",
-                msg.chat.id, progress_msg.message_id,
+                f"✅ *Збережено!*\n\n"
+                f"📄 `{fn}`\n"
+                f"📦 {fmt(res.get('size',0))} → 🔐 {fmt(res.get('size_enc',0))}\n"
+                f"🖥 {res.get('routed_via','?')}",
+                msg.chat.id, pm.message_id,
                 reply_markup=InlineKeyboardMarkup().add(
-                    InlineKeyboardButton("📁 Всі файли", callback_data="files"),
-                    InlineKeyboardButton("↩️ Меню",      callback_data="menu"),
+                    InlineKeyboardButton("📁 Файли", callback_data="files"),
+                    InlineKeyboardButton("↩️ Меню",  callback_data="menu"),
                 ))
         else:
-            bot.edit_message_text(
-                f"❌ *Помилка збереження*\n\n{res.get('message', 'Невідома помилка')}",
-                msg.chat.id, progress_msg.message_id)
+            bot.edit_message_text(f"❌ {res.get('message','Помилка')}", msg.chat.id, pm.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Помилка: {e}", msg.chat.id, progress_msg.message_id)
+        bot.edit_message_text(f"❌ {e}", msg.chat.id, pm.message_id)
 
-# ─── Callback кнопки ──────────────────────────────────────────────────────────
+# ─── Допоміжні функції ────────────────────────────────────────────────────────
+def show_files(uid, cid, mid=None):
+    res, code = api("GET", "/files", token=tok(uid))
+    if code != 200:
+        txt = f"❌ {res.get('message','Помилка')}"
+        if mid: bot.edit_message_text(txt, cid, mid)
+        else:   bot.send_message(cid, txt)
+        return
+    files = res.get("files", [])
+    quota = res.get("quota", {})
+    if not files:
+        txt = "📂 *Сховище порожнє*\n\nНадішліть файл у чат!"
+        kb  = kb_back()
+    else:
+        txt = f"📁 *Файли* — {len(files)} шт. | {fmt(quota.get('bytes_encrypted',0))}\n\nОберіть файл:"
+        kb  = kb_files(files)
+    if mid: bot.edit_message_text(txt, cid, mid, reply_markup=kb)
+    else:   bot.send_message(cid, txt, reply_markup=kb)
+
+def send_status(uid, res, cid=None, mid=None):
+    st   = res.get("storage_stats", {})
+    sats = res.get("satellites", [])
+    sat_txt = "\n".join(
+        f"{'🟢' if s['status']=='active' else '🔴'} *{s['id']}* — {s.get('requests',0)} запитів"
+        for s in sats)
+    txt = (
+        f"📊 *Стан системи*\n\n"
+        f"📤 Завантажень: `{st.get('uploads',0)}`\n"
+        f"⬇️ Скачувань: `{st.get('downloads',0)}`\n"
+        f"💾 Оброблено: `{fmt(st.get('total_bytes',0))}`\n\n"
+        f"*Сервери:*\n{sat_txt}\n\n"
+        f"🔒 {res.get('rate_limit','')}\n"
+        f"📦 Макс. файл: `{fmt(res.get('max_file_size',0))}`"
+    )
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("🔄 Оновити", callback_data="status"),
+        InlineKeyboardButton("↩️ Меню",    callback_data="menu"),
+    )
+    if mid: bot.edit_message_text(txt, cid, mid, reply_markup=kb)
+    else:   bot.send_message(uid, txt, reply_markup=kb)
+
+def show_profile(uid, cid, mid=None):
+    res, code = api("GET", "/files", token=tok(uid))
+    quota = res.get("quota", {}) if code == 200 else {}
+    txt = (
+        f"👤 *Профіль*\n\n"
+        f"Логін: `{uname(uid)}`\n"
+        f"📁 Файлів: `{quota.get('files',0)}`\n"
+        f"💾 Зайнято: `{fmt(quota.get('bytes_encrypted',0))}`\n"
+        f"🔐 Шифрування: `AES-128-CBC`"
+    )
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("📁 Файли", callback_data="files"),
+        InlineKeyboardButton("↩️ Меню",  callback_data="menu"),
+    )
+    if mid: bot.edit_message_text(txt, cid, mid, reply_markup=kb)
+    else:   bot.send_message(cid, txt, reply_markup=kb)
+
+# ─── Callback ─────────────────────────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda c: True)
-def handle_callback(call):
+def on_callback(call):
     uid  = call.from_user.id
     data = call.data
     cid  = call.message.chat.id
     mid  = call.message.message_id
-    token = get_token(uid)
-
     bot.answer_callback_query(call.id)
 
-    # Головне меню
     if data == "menu":
-        if is_logged_in(uid):
-            uname = get_username(uid)
-            bot.edit_message_text(
-                f"👤 *{uname}* | ☁️ KNUBAVaultBot\n\nОберіть дію:",
-                cid, mid, reply_markup=kb_main_auth())
+        if logged(uid):
+            bot.edit_message_text(f"👤 *{uname(uid)}* | ☁️ KNUBAVaultBot\n\nОберіть дію:", cid, mid, reply_markup=kb_user())
         else:
-            bot.edit_message_text(
-                "☁️ *KNUBAVaultBot*\n\nОберіть дію:",
-                cid, mid, reply_markup=kb_main_guest())
+            bot.edit_message_text("☁️ *KNUBAVaultBot*\n\nОберіть дію:", cid, mid, reply_markup=kb_guest())
 
-    # Список файлів
+    elif data == "cancel":
+        clrst(uid)
+        if logged(uid): bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_user())
+        else:           bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_guest())
+
+    elif data in ("do_login", "guide_login"):
+        clrst(uid)
+        setst(uid, S_LOGIN_USER)
+        bot.edit_message_text(
+            "🔓 *Вхід у сховище*\n\nКрок 1 з 2\n👤 Введіть логін:",
+            cid, mid, reply_markup=kb_cancel())
+
+    elif data in ("do_register", "guide_register"):
+        clrst(uid)
+        setst(uid, S_REG_USER)
+        bot.edit_message_text(
+            "📝 *Реєстрація*\n\nКрок 1 з 2\n👤 Введіть логін:",
+            cid, mid, reply_markup=kb_cancel())
+
     elif data == "files":
-        if not token:
+        if not tok(uid):
             bot.answer_callback_query(call.id, "🔒 Спочатку увійдіть!", show_alert=True)
             return
-        _show_files(uid, cid, mid)
+        show_files(uid, cid, mid)
 
-    # Інфо про файл
     elif data.startswith("file:"):
-        filename = data[5:]
-        bot.edit_message_text(
-            f"📄 *{filename}*\n\nОберіть дію:",
-            cid, mid, reply_markup=kb_file_actions(filename))
+        fn = data[5:]
+        bot.edit_message_text(f"📄 *{fn}*\n\nОберіть дію:", cid, mid, reply_markup=kb_file(fn))
 
-    # Підтвердження видалення
-    elif data.startswith("del_confirm:"):
-        filename = data[12:]
+    elif data.startswith("del_ask:"):
+        fn = data[8:]
         bot.edit_message_text(
-            f"🗑 *Видалити файл?*\n\n`{filename}`\n\n⚠️ Цю дію неможливо скасувати!",
-            cid, mid, reply_markup=kb_confirm_delete(filename))
+            f"🗑 *Видалити файл?*\n\n`{fn}`\n\n⚠️ Цю дію неможливо скасувати!",
+            cid, mid, reply_markup=kb_del_confirm(fn))
 
-    # Видалення
     elif data.startswith("del:"):
-        filename = data[4:]
-        if not token: return
-        res, code = api("DELETE", f"/delete/{filename}", token=token)
+        fn = data[4:]
+        res, code = api("DELETE", f"/delete/{fn}", token=tok(uid))
         if code == 200:
-            bot.edit_message_text(
-                f"🗑 *Файл видалено*\n\n`{filename}`",
-                cid, mid,
+            bot.edit_message_text(f"🗑 Файл `{fn}` видалено.", cid, mid,
                 reply_markup=InlineKeyboardMarkup().add(
-                    InlineKeyboardButton("📁 До списку", callback_data="files"),
-                    InlineKeyboardButton("↩️ Меню",      callback_data="menu"),
+                    InlineKeyboardButton("📁 Файли", callback_data="files"),
+                    InlineKeyboardButton("↩️ Меню",  callback_data="menu"),
                 ))
         else:
-            bot.answer_callback_query(call.id, f"❌ {res.get('message')}", show_alert=True)
+            bot.answer_callback_query(call.id, f"❌ {res.get('message','Помилка')}", show_alert=True)
 
-    # Скачати файл
     elif data.startswith("dl:"):
-        filename = data[3:]
-        if not token: return
-        bot.send_message(uid, f"⏳ Отримую `{filename}`...")
-        raw, code = api("GET", f"/download/{filename}", token=token)
+        fn = data[3:]
+        bot.send_message(uid, f"⏳ Отримую `{fn}`...")
+        raw, code = api("GET", f"/download/{fn}", token=tok(uid))
         if code == 200 and isinstance(raw, bytes):
-            bot.send_document(uid,
-                (filename, io.BytesIO(raw), "application/octet-stream"),
-                caption=f"📄 `{filename}` | {fmt(len(raw))}",
+            bot.send_document(uid, (fn, io.BytesIO(raw), "application/octet-stream"),
+                caption=f"📄 `{fn}` | {fmt(len(raw))}",
                 reply_markup=InlineKeyboardMarkup().add(
-                    InlineKeyboardButton("📁 До списку", callback_data="files")
-                ))
+                    InlineKeyboardButton("📁 Файли", callback_data="files")))
         else:
-            err = raw.get("message", "Помилка") if isinstance(raw, dict) else "Помилка"
-            bot.send_message(uid, f"❌ {err}")
+            bot.send_message(uid, f"❌ {raw.get('message','Помилка') if isinstance(raw,dict) else 'Помилка'}")
 
-    # Стан системи
     elif data == "status":
         res, code = api("GET", "/status")
-        if code == 200:
-            _send_status(uid, res, cid, mid)
-        else:
-            bot.answer_callback_query(call.id, "❌ Сервер недоступний", show_alert=True)
+        if code == 200: send_status(uid, res, cid, mid)
+        else: bot.answer_callback_query(call.id, "❌ Недоступний", show_alert=True)
 
-    # Профіль
     elif data == "profile":
-        if not token:
+        if not tok(uid):
             bot.answer_callback_query(call.id, "🔒 Спочатку увійдіть!", show_alert=True)
             return
-        _show_profile(uid, cid, mid)
+        show_profile(uid, cid, mid)
 
-    # Веб-інтерфейс
     elif data == "webapp":
         bot.edit_message_text(
-            f"🌐 *Веб-інтерфейс*\n\n"
-            f"Відкрийте у браузері:\n{SERVER_URL}\n\n"
-            f"Там можна керувати файлами через зручний веб-інтерфейс.",
+            f"🌐 *Веб-інтерфейс*\n\nВідкрийте у браузері:\n{SERVER_URL}",
             cid, mid,
             reply_markup=InlineKeyboardMarkup().add(
                 InlineKeyboardButton("🌐 Відкрити", url=SERVER_URL),
                 InlineKeyboardButton("↩️ Меню",     callback_data="menu"),
-            ),
-            disable_web_page_preview=True)
-
-    # Інструкції
-    elif data == "how_upload":
-        bot.edit_message_text(
-            "📤 *Як завантажити файл*\n\n"
-            "Просто надішліть файл у цей чат!\n\n"
-            "✅ Підтримуються:\n"
-            "• 📄 Документи\n• 🖼 Фото\n• 🎥 Відео\n• 🎵 Аудіо\n• 🎤 Голосові\n\n"
-            f"⚠️ Ліміт: *50 MB*",
-            cid, mid, reply_markup=kb_back_menu())
+            ))
 
     elif data == "help":
         bot.edit_message_text(
             "❓ *Довідка*\n\n"
-            "/start — головне меню\n"
-            "/register `логін пароль` — реєстрація\n"
-            "/login `логін пароль` — вхід\n"
-            "/files — список файлів\n"
-            "/upload — як завантажити\n"
-            "/status — стан системи\n"
-            "/profile — ваш профіль\n"
-            "/logout — вийти",
-            cid, mid, reply_markup=kb_back_menu())
+            "/login — увійти\n/register — реєстрація\n"
+            "/files — файли\n/profile — профіль\n"
+            "/status — стан\n/logout — вийти\n\n"
+            "📤 Надішліть файл у чат щоб зберегти.",
+            cid, mid, reply_markup=kb_back())
 
     elif data == "logout":
-        if token:
-            api("POST", "/logout", token=token)
+        clrst(uid)
+        if tok(uid):
+            api("POST", "/logout", token=tok(uid))
             del sessions[uid]
-        clear_state(uid)
         bot.edit_message_text(
-            "🚪 *Вихід виконано*\n\nДо побачення! Натисніть /login щоб увійти знову.",
-            cid, mid, reply_markup=kb_main_guest())
+            "🚪 *Вихід виконано*\n\nДо побачення! Натисніть /start",
+            cid, mid, reply_markup=kb_guest())
 
-    # Скасування FSM
-    elif data == "cancel":
-        clear_state(uid)
-        if is_logged_in(uid):
-            bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_main_auth())
-        else:
-            bot.edit_message_text("↩️ Скасовано.", cid, mid, reply_markup=kb_main_guest())
-
-    # Кнопки входу/реєстрації з меню
-    elif data == "guide_login":
-        clear_state(uid)
-        set_state(uid, STATE_LOGIN_USER)
-        bot.edit_message_text(
-            "🔓 *Вхід у сховище*\n\nКрок 1/2\n👤 Введіть ваш логін:",
-            cid, mid, reply_markup=kb_cancel())
-
-    elif data == "guide_register":
-        clear_state(uid)
-        set_state(uid, STATE_REGISTER_USER)
-        bot.edit_message_text(
-            "📝 *Реєстрація*\n\nКрок 1/2\n👤 Введіть бажаний логін:",
-            cid, mid, reply_markup=kb_cancel())
-
-# ─── Текстові повідомлення + FSM ─────────────────────────────────────────────
+# ─── Текстові повідомлення + FSM ──────────────────────────────────────────────
 @bot.message_handler(func=lambda m: True)
 def handle_text(msg):
-    uid   = msg.from_user.id
-    text  = msg.text.strip() if msg.text else ""
-    state = get_state(uid)
+    uid = msg.from_user.id
+    txt = (msg.text or "").strip()
+    st  = state(uid)
 
-    # ── FSM: Вхід ────────────────────────────────────────────────────────────
-    if state == STATE_LOGIN_USER:
-        set_state(uid, STATE_LOGIN_PASS, {"username": text})
+    # FSM: Вхід крок 1 — логін
+    if st == S_LOGIN_USER:
+        setst(uid, S_LOGIN_PASS, {"username": txt})
         bot.reply_to(msg,
-            f"👤 Логін: `{text}`\n\n"
-            "Крок 2/2\n"
-            "🔑 Введіть пароль:",
+            f"👤 Логін: `{txt}`\n\nКрок 2 з 2\n🔑 Введіть пароль:",
             reply_markup=kb_cancel())
         return
 
-    if state == STATE_LOGIN_PASS:
-        data     = get_state_data(uid)
-        username = data.get("username", "")
-        password = text
-        clear_state(uid)
-        # Видаляємо повідомлення з паролем
+    # FSM: Вхід крок 2 — пароль
+    if st == S_LOGIN_PASS:
+        username = sdata(uid).get("username","")
+        clrst(uid)
         try: bot.delete_message(msg.chat.id, msg.message_id)
         except: pass
-        res, code = api("POST", "/login", json_data={"username": username, "password": password})
+        res, code = api("POST", "/login", json_data={"username": username, "password": txt})
         if code == 200:
             sessions[uid] = {"token": res["token"], "username": username}
             bot.send_message(uid,
-                f"✅ *Вхід виконано!*\n\n"
-                f"👤 Акаунт: *{username}*\n"
-                f"🔐 Сесія активна 24 години\n\n"
-                f"Оберіть дію:",
-                reply_markup=kb_main_auth())
+                f"✅ *Вхід виконано!*\n\n👤 *{username}*\n🔐 Сесія активна 24 год\n\nОберіть дію:",
+                reply_markup=kb_user())
         else:
             bot.send_message(uid,
-                f"❌ *Помилка входу*\n\n"
-                f"{res.get('message', 'Невірний логін або пароль')}\n\n"
-                f"Спробуйте ще раз /login",
-                reply_markup=kb_main_guest())
+                f"❌ *Помилка входу*\n\n{res.get('message','Невірний логін або пароль')}\n\nСпробуйте ще раз:",
+                reply_markup=kb_guest())
         return
 
-    # ── FSM: Реєстрація ───────────────────────────────────────────────────────
-    if state == STATE_REGISTER_USER:
-        if len(text) < 3:
-            bot.reply_to(msg, "⚠️ Логін має бути мінімум 3 символи. Спробуйте ще:", reply_markup=kb_cancel())
+    # FSM: Реєстрація крок 1 — логін
+    if st == S_REG_USER:
+        if len(txt) < 3:
+            bot.reply_to(msg, "⚠️ Логін мін. 3 символи. Введіть ще раз:", reply_markup=kb_cancel())
             return
-        set_state(uid, STATE_REGISTER_PASS, {"username": text})
+        setst(uid, S_REG_PASS, {"username": txt})
         bot.reply_to(msg,
-            f"👤 Логін: `{text}`\n\n"
-            "Крок 2/2\n"
-            "🔑 Введіть пароль (мін. 4 символи):",
+            f"👤 Логін: `{txt}`\n\nКрок 2 з 2\n🔑 Введіть пароль (мін. 4 символи):",
             reply_markup=kb_cancel())
         return
 
-    if state == STATE_REGISTER_PASS:
-        data     = get_state_data(uid)
-        username = data.get("username", "")
-        password = text
-        clear_state(uid)
-        if len(password) < 4:
-            bot.reply_to(msg, "⚠️ Пароль має бути мінімум 4 символи. Почніть знову /register", reply_markup=kb_main_guest())
+    # FSM: Реєстрація крок 2 — пароль
+    if st == S_REG_PASS:
+        username = sdata(uid).get("username","")
+        clrst(uid)
+        if len(txt) < 4:
+            bot.send_message(uid, "⚠️ Пароль мін. 4 символи. Спробуйте /register", reply_markup=kb_guest())
             return
-        # Видаляємо повідомлення з паролем
         try: bot.delete_message(msg.chat.id, msg.message_id)
         except: pass
-        res, code = api("POST", "/register", json_data={"username": username, "password": password})
+        res, code = api("POST", "/register", json_data={"username": username, "password": txt})
         if code == 201:
             bot.send_message(uid,
-                f"✅ *Акаунт створено!*\n\n"
-                f"👤 Логін: `{username}`\n\n"
-                f"Тепер увійдіть — натисніть /login",
-                reply_markup=kb_main_guest())
+                f"✅ *Акаунт створено!*\n\n👤 Логін: `{username}`\n\nТепер увійдіть: /login",
+                reply_markup=kb_guest())
         elif code == 409:
-            bot.send_message(uid,
-                f"⚠️ Логін `{username}` вже зайнятий.\n\nСпробуйте інший /register",
-                reply_markup=kb_main_guest())
+            bot.send_message(uid, f"⚠️ Логін `{username}` вже зайнятий.\n\nСпробуйте інший: /register", reply_markup=kb_guest())
         else:
-            bot.send_message(uid, f"❌ {res.get('message', 'Помилка')}")
+            bot.send_message(uid, f"❌ {res.get('message','Помилка')}")
         return
 
-    # ── Звичайні повідомлення ─────────────────────────────────────────────────
-    if is_logged_in(uid):
-        bot.reply_to(msg,
-            "📤 Щоб завантажити файл — надішліть його як вкладення.\n\n"
-            "Або оберіть дію:",
-            reply_markup=kb_main_auth())
+    # Звичайне повідомлення
+    if logged(uid):
+        bot.reply_to(msg, "📤 Надішліть файл щоб зберегти.\n\nАбо оберіть дію:", reply_markup=kb_user())
     else:
-        bot.reply_to(msg,
-            "🔒 Ви не авторизовані.\n\n"
-            "Натисніть /start або оберіть дію:",
-            reply_markup=kb_main_guest())
+        bot.reply_to(msg, "🔒 Ви не авторизовані.\n\nНатисніть /start", reply_markup=kb_guest())
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    set_bot_commands()
-    print("=" * 50)
-    print("  KNUBAVaultBot запущено")
-    print(f"  Сервер: {SERVER_URL}")
-    print("=" * 50)
+    set_commands()
+    print("KNUBAVaultBot запущено!")
     bot.infinity_polling(timeout=30, long_polling_timeout=30)
